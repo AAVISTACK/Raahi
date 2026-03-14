@@ -17,7 +17,6 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
     };
 
     const token = body.firebase_token ?? body.idToken ?? body.id_token;
-
     if (!token) {
       res.status(400).json({ error: "firebase_token (or idToken) is required" });
       return;
@@ -25,8 +24,7 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
 
     const decoded = await verifyFirebaseToken(token);
     const { uid, email, name, picture } = decoded;
-    const isNewUser = !!(decoded.additionalUserInfo?.isNewUser) ||
-      (decoded.auth_time === decoded.iat);
+    const isNewUser = decoded.auth_time === decoded.iat;
 
     const jwtToken = signToken({ userId: uid, email: email ?? undefined, provider: "google" });
 
@@ -51,20 +49,13 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
 router.post("/otp/send", async (req: Request, res: Response): Promise<void> => {
   try {
     const { phone } = req.body as { phone?: string };
-    if (!phone) {
-      res.status(400).json({ error: "phone number is required" });
-      return;
-    }
+    if (!phone) { res.status(400).json({ error: "phone number is required" }); return; }
     const phoneRegex = /^\+[1-9]\d{6,14}$/;
     if (!phoneRegex.test(phone)) {
       res.status(400).json({ error: "Invalid phone. Use E.164 format e.g. +919876543210" });
       return;
     }
-    res.json({
-      success: true,
-      message: "OTP sent via Firebase Phone Auth. Use verificationId from your app to verify.",
-      phone,
-    });
+    res.json({ success: true, message: "OTP sent via Firebase Phone Auth.", phone });
   } catch (error) {
     res.status(500).json({ error: "Failed to process OTP request", details: String(error) });
   }
@@ -73,20 +64,13 @@ router.post("/otp/send", async (req: Request, res: Response): Promise<void> => {
 router.post("/send-otp", async (req: Request, res: Response): Promise<void> => {
   try {
     const { phone } = req.body as { phone?: string };
-    if (!phone) {
-      res.status(400).json({ error: "phone number is required" });
-      return;
-    }
+    if (!phone) { res.status(400).json({ error: "phone number is required" }); return; }
     const phoneRegex = /^\+[1-9]\d{6,14}$/;
     if (!phoneRegex.test(phone)) {
       res.status(400).json({ error: "Invalid phone. Use E.164 format e.g. +919876543210" });
       return;
     }
-    res.json({
-      success: true,
-      message: "OTP sent via Firebase Phone Auth. Use verificationId from your app to verify.",
-      phone,
-    });
+    res.json({ success: true, message: "OTP sent via Firebase Phone Auth.", phone });
   } catch (error) {
     res.status(500).json({ error: "Failed to process OTP request", details: String(error) });
   }
@@ -94,27 +78,15 @@ router.post("/send-otp", async (req: Request, res: Response): Promise<void> => {
 
 router.post("/otp/verify", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { idToken, id_token, phone } = req.body as {
-      idToken?: string;
-      id_token?: string;
-      phone?: string;
-    };
+    const { idToken, id_token, phone } = req.body as { idToken?: string; id_token?: string; phone?: string };
     const token = idToken ?? id_token;
-
-    if (!token) {
-      res.status(400).json({ error: "id_token is required (Firebase phone auth token)" });
-      return;
-    }
+    if (!token) { res.status(400).json({ error: "id_token is required (Firebase phone auth token)" }); return; }
 
     const decoded = await verifyFirebaseToken(token);
     const { uid, phone_number } = decoded;
     const isNewUser = decoded.auth_time === decoded.iat;
 
-    const jwtToken = signToken({
-      userId: uid,
-      phone: phone_number ?? phone ?? undefined,
-      provider: "phone",
-    });
+    const jwtToken = signToken({ userId: uid, phone: phone_number ?? phone ?? undefined, provider: "phone" });
 
     res.json({
       success: true,
@@ -130,27 +102,15 @@ router.post("/otp/verify", async (req: Request, res: Response): Promise<void> =>
 
 router.post("/verify-otp", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { idToken, id_token, phone } = req.body as {
-      idToken?: string;
-      id_token?: string;
-      phone?: string;
-    };
+    const { idToken, id_token, phone } = req.body as { idToken?: string; id_token?: string; phone?: string };
     const token = idToken ?? id_token;
-
-    if (!token) {
-      res.status(400).json({ error: "idToken is required (Firebase phone auth token)" });
-      return;
-    }
+    if (!token) { res.status(400).json({ error: "id_token is required (Firebase phone auth token)" }); return; }
 
     const decoded = await verifyFirebaseToken(token);
     const { uid, phone_number } = decoded;
     const isNewUser = decoded.auth_time === decoded.iat;
 
-    const jwtToken = signToken({
-      userId: uid,
-      phone: phone_number ?? phone ?? undefined,
-      provider: "phone",
-    });
+    const jwtToken = signToken({ userId: uid, phone: phone_number ?? phone ?? undefined, provider: "phone" });
 
     res.json({
       success: true,
@@ -167,17 +127,10 @@ router.post("/verify-otp", async (req: Request, res: Response): Promise<void> =>
 router.post("/login", async (req: Request, res: Response): Promise<void> => {
   try {
     const { idToken, id_token, firebase_token, provider } = req.body as {
-      idToken?: string;
-      id_token?: string;
-      firebase_token?: string;
-      provider?: string;
+      idToken?: string; id_token?: string; firebase_token?: string; provider?: string;
     };
     const token = firebase_token ?? idToken ?? id_token;
-
-    if (!token) {
-      res.status(400).json({ error: "idToken (or firebase_token) is required" });
-      return;
-    }
+    if (!token) { res.status(400).json({ error: "idToken (or firebase_token) is required" }); return; }
 
     const decoded = await verifyFirebaseToken(token);
     const { uid, email, phone_number, name, picture } = decoded;
@@ -185,10 +138,8 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
     const isNewUser = decoded.auth_time === decoded.iat;
 
     const jwtToken = signToken({
-      userId: uid,
-      email: email ?? undefined,
-      phone: phone_number ?? undefined,
-      provider: authProvider,
+      userId: uid, email: email ?? undefined,
+      phone: phone_number ?? undefined, provider: authProvider,
     });
 
     res.json({
