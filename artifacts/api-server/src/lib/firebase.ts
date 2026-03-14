@@ -10,16 +10,10 @@ export function getFirebaseAdmin(): admin.app.App {
 
     if (projectId && clientEmail && privateKey) {
       admin.initializeApp({
-        credential: admin.credential.cert({
-          projectId,
-          clientEmail,
-          privateKey,
-        }),
+        credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
       });
     } else {
-      admin.initializeApp({
-        projectId: projectId || "placeholder-project",
-      });
+      admin.initializeApp({ projectId: projectId || "raahi-d3564" });
     }
     initialized = true;
   }
