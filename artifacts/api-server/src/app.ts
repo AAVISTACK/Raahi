@@ -5,30 +5,11 @@ import { getFirebaseAdmin } from "./lib/firebase.js";
 
 const app: Express = express();
 
-const allowedOrigins = [
-  "https://backend-deployer--enlighenavi.replit.app",
-  /^https:\/\/.*\.replit\.app$/,
-  /^https:\/\/.*\.replit\.dev$/,
-  "http://localhost:3000",
-  "http://localhost:8080",
-  "http://10.0.2.2:3000",
-];
-
 app.use(
   cors({
-    origin: (origin, callback) => {
-      if (!origin) {
-        callback(null, true);
-        return;
-      }
-      const allowed = allowedOrigins.some((pattern) => {
-        if (typeof pattern === "string") return pattern === origin;
-        return pattern.test(origin);
-      });
-      callback(null, true);
-    },
+    origin: true,
     credentials: true,
-    methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization", "Accept"],
   })
 );
@@ -40,22 +21,26 @@ app.get("/", (_req: Request, res: Response) => {
   res.json({ message: "Raahi API Server", version: "1.0.0", status: "running" });
 });
 
-app.use("/api", router);
-
-app.get("/api", (_req: Request, res: Response) => {
+const apiInfo = (_req: Request, res: Response) => {
   res.json({
     message: "Raahi API",
     version: "1.0.0",
     endpoints: {
-      health: "GET /api/health",
-      healthz: "GET /api/healthz",
-      googleAuth: "POST /api/auth/google",
-      sendOtp: "POST /api/auth/send-otp",
-      verifyOtp: "POST /api/auth/verify-otp",
-      login: "POST /api/auth/login",
+      health: "GET /api/v1/health",
+      healthz: "GET /api/v1/healthz",
+      googleAuth: "POST /api/v1/auth/google",
+      sendOtp: "POST /api/v1/auth/otp/send",
+      verifyOtp: "POST /api/v1/auth/otp/verify",
+      login: "POST /api/v1/auth/login",
     },
   });
-});
+};
+
+app.use("/api/v1", router);
+app.use("/api", router);
+
+app.get("/api/v1", apiInfo);
+app.get("/api", apiInfo);
 
 try {
   getFirebaseAdmin();
