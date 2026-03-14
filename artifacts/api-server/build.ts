@@ -12,7 +12,6 @@ const __dirname = path.dirname(__filename);
 const allowlist = [
   "@google/generative-ai",
   "axios",
-  "firebase-admin",
   "connect-pg-simple",
   "cors",
   "date-fns",
