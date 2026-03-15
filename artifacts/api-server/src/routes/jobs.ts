@@ -67,13 +67,13 @@ router.get("/my", authMiddleware, (req: AuthRequest, res: Response): void => {
 });
 
 router.get("/:id", authMiddleware, (req: AuthRequest, res: Response): void => {
-  const job = jobStore.get(req.params.id);
+  const job = jobStore.get(req.params["id"] as string);
   if (!job) { res.status(404).json({ error: "Job not found" }); return; }
   res.json({ success: true, job });
 });
 
 router.post("/:id/accept", authMiddleware, (req: AuthRequest, res: Response): void => {
-  const job = jobStore.get(req.params.id);
+  const job = jobStore.get(req.params["id"] as string);
   if (!job) { res.status(404).json({ error: "Job not found" }); return; }
   if (job.status !== "pending") {
     res.status(400).json({ error: `Job is already ${job.status}` });
@@ -86,7 +86,7 @@ router.post("/:id/accept", authMiddleware, (req: AuthRequest, res: Response): vo
 });
 
 router.post("/:id/arrive", authMiddleware, (req: AuthRequest, res: Response): void => {
-  const job = jobStore.get(req.params.id);
+  const job = jobStore.get(req.params["id"] as string);
   if (!job) { res.status(404).json({ error: "Job not found" }); return; }
   const { otp } = req.body as { otp?: string };
   if (!otp) { res.status(400).json({ error: "otp is required" }); return; }
@@ -101,7 +101,7 @@ router.post("/:id/arrive", authMiddleware, (req: AuthRequest, res: Response): vo
 });
 
 router.post("/:id/complete", authMiddleware, (req: AuthRequest, res: Response): void => {
-  const job = jobStore.get(req.params.id);
+  const job = jobStore.get(req.params["id"] as string);
   if (!job) { res.status(404).json({ error: "Job not found" }); return; }
   if (job.status !== "arrived") {
     res.status(400).json({ error: "Job must be at arrived status to complete" });
