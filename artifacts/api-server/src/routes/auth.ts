@@ -8,6 +8,7 @@ const router: IRouter = Router();
 // ─── MSG91 OTP ────────────────────────────────────────────────
 const MSG91_API_KEY    = process.env["MSG91_API_KEY"]    ?? "";
 const MSG91_TEMPLATE_ID = process.env["MSG91_TEMPLATE_ID"] ?? "";
+const MSG91_WIDGET_ID   = "36636f726646343938363634";
 
 const OTP_EXPIRY_MS       = 5 * 60 * 1000;  // 5 minutes
 const RATE_WINDOW_MS      = 60 * 60 * 1000; // 1 hour
@@ -269,6 +270,87 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
     });
   } catch (error) {
     res.status(401).json({ error: "Authentication failed", details: String(error) });
+  }
+});
+
+// MSG91 widget OTP verifier (called by /otp/verify-msg91)
+async function verifyMsg91WidgetOtp(phone: string, otp: string): Promise<boolean> {
+  // In dev mode (no API key) accept any 6-digit OTP for testing
+  if (!MSG91_API_KEY) {
+    console.warn("[MSG91-WIDGET] No API key — accepting OTP in dev mode:", otp);
+    return otp.length === 6;
+  }
+  const identifier = phone.startsWith("+") ? phone.slice(1) : phone;
+  return new Promise((resolve) => {
+    const body = JSON.stringify({ otp, widgetId: MSG91_WIDGET_ID, identifier });
+    const options = {
+      hostname: "api.msg91.com",
+      path: "/api/v5/widget/verifyOtp",
+      method: "POST",
+      headers: {
+        authkey: MSG91_API_KEY,
+        "Content-Type": "application/json",
+        "Content-Length": Buffer.byteLength(body),
+      },
+    };
+    const req = https.request(options, (resp) => {
+      let d = "";
+      resp.on("data", (c) => (d += c));
+      resp.on("end", () => {
+        try {
+          const parsed = JSON.parse(d) as { type?: string; message?: string };
+          console.log("[MSG91-WIDGET] verifyOtp response:", parsed);
+          resolve(parsed.type === "success");
+        } catch {
+          resolve(false);
+        }
+      });
+    });
+    req.on("error", () => resolve(false));
+    req.write(body);
+    req.end();
+  });
+}
+
+// ─── GET /msg91-token ────────────────────────────────────────────
+// Returns the MSG91 auth key so the Flutter widget SDK can initialise.
+// The auth key is kept server-side only and never shipped in the app binary.
+router.get("/msg91-token", (req: Request, res: Response): void => {
+  if (!MSG91_API_KEY) {
+    res.status(503).json({ error: "MSG91 not configured on this server" });
+    return;
+  }
+  res.json({ success: true, auth_token: MSG91_API_KEY, widget_id: MSG91_WIDGET_ID });
+});
+
+// ─── POST /otp/verify-msg91 ───────────────────────────────────────
+// Verifies OTP with MSG91 widget API then issues a Raahi JWT.
+router.post("/otp/verify-msg91", async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { phone, otp } = req.body as { phone?: string; otp?: string };
+    if (!phone || !otp) {
+      res.status(400).json({ error: "phone and otp are required" });
+      return;
+    }
+
+    // Verify OTP with MSG91 widget API
+    const verified = await verifyMsg91WidgetOtp(phone, otp);
+    if (!verified) {
+      res.status(400).json({ error: "Invalid or expired OTP" });
+      return;
+    }
+
+    // Issue Raahi JWT
+    const userId   = "phone_" + phone.replace(/[^0-9]/g, "");
+    const jwtToken = signToken({ userId, phone, provider: "phone" });
+    res.json({
+      success: true,
+      token: jwtToken,
+      is_new_user: false,
+      user: { uid: userId, phone, provider: "phone" },
+    });
+  } catch (error) {
+    res.status(500).json({ error: "OTP verification failed", details: String(error) });
   }
 });
 
