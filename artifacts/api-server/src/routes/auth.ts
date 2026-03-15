@@ -6,9 +6,9 @@ import { signToken } from "../lib/jwt.js";
 const router: IRouter = Router();
 
 // ─── MSG91 OTP ────────────────────────────────────────────────
-const MSG91_API_KEY    = process.env["MSG91_API_KEY"]    ?? "";
+const MSG91_AUTH_KEY   = process.env["MSG91_AUTH_KEY"]   ?? "";
 const MSG91_TEMPLATE_ID = process.env["MSG91_TEMPLATE_ID"] ?? "";
-const MSG91_WIDGET_ID   = "36636f726646343938363634";
+const MSG91_WIDGET_ID  = process.env["MSG91_WIDGET_ID"]  ?? "36636f726646343938363634";
 
 const OTP_EXPIRY_MS       = 5 * 60 * 1000;  // 5 minutes
 const RATE_WINDOW_MS      = 60 * 60 * 1000; // 1 hour
@@ -42,7 +42,7 @@ function generateOtp(): string {
 }
 
 async function sendMsg91Otp(phone: string, otp: string): Promise<void> {
-  if (!MSG91_API_KEY || !MSG91_TEMPLATE_ID) {
+  if (!MSG91_AUTH_KEY || !MSG91_TEMPLATE_ID) {
     console.warn("[MSG91] API key or template ID not configured — OTP not sent");
     return;
   }
@@ -54,7 +54,7 @@ async function sendMsg91Otp(phone: string, otp: string): Promise<void> {
       hostname: "control.msg91.com",
       path,
       method: "POST",
-      headers: { authkey: MSG91_API_KEY, "Content-Type": "application/json" },
+      headers: { authkey: MSG91_AUTH_KEY, "Content-Type": "application/json" },
     };
     const req = https.request(options, (resp) => {
       let d = "";
@@ -108,7 +108,7 @@ router.post("/send-otp", async (req: Request, res: Response): Promise<void> => {
     } catch (smsErr) {
       console.error("[MSG91] send error:", smsErr);
       // In dev/misconfigured: still store OTP but warn
-      if (!MSG91_API_KEY) {
+      if (!MSG91_AUTH_KEY) {
         console.warn(`[DEV] OTP for ${phone}: ${otp}`);
       } else {
         res.status(502).json({ error: "Failed to send OTP via SMS", details: String(smsErr) });
@@ -195,7 +195,7 @@ router.post("/otp/send", async (req: Request, res: Response): Promise<void> => {
     const otp = generateOtp();
     otpStore.set(phone, { otp, expiry: Date.now() + OTP_EXPIRY_MS, verifyAttempts: 0 });
     try { await sendMsg91Otp(phone, otp); } catch (e) {
-      if (MSG91_API_KEY) { res.status(502).json({ error: "SMS send failed", details: String(e) }); return; }
+      if (MSG91_AUTH_KEY) { res.status(502).json({ error: "SMS send failed", details: String(e) }); return; }
       console.warn(`[DEV] OTP for ${phone}: ${otp}`);
     }
     res.json({ success: true, message: "OTP sent", phone, expires_in_seconds: 300 });
@@ -276,7 +276,7 @@ router.post("/login", async (req: Request, res: Response): Promise<void> => {
 // MSG91 widget OTP verifier (called by /otp/verify-msg91)
 async function verifyMsg91WidgetOtp(phone: string, otp: string): Promise<boolean> {
   // In dev mode (no API key) accept any 6-digit OTP for testing
-  if (!MSG91_API_KEY) {
+  if (!MSG91_AUTH_KEY) {
     console.warn("[MSG91-WIDGET] No API key — accepting OTP in dev mode:", otp);
     return otp.length === 6;
   }
@@ -288,7 +288,7 @@ async function verifyMsg91WidgetOtp(phone: string, otp: string): Promise<boolean
       path: "/api/v5/widget/verifyOtp",
       method: "POST",
       headers: {
-        authkey: MSG91_API_KEY,
+        authkey: MSG91_AUTH_KEY,
         "Content-Type": "application/json",
         "Content-Length": Buffer.byteLength(body),
       },
@@ -316,11 +316,11 @@ async function verifyMsg91WidgetOtp(phone: string, otp: string): Promise<boolean
 // Returns the MSG91 auth key so the Flutter widget SDK can initialise.
 // The auth key is kept server-side only and never shipped in the app binary.
 router.get("/msg91-token", (req: Request, res: Response): void => {
-  if (!MSG91_API_KEY) {
+  if (!MSG91_AUTH_KEY) {
     res.status(503).json({ error: "MSG91 not configured on this server" });
     return;
   }
-  res.json({ success: true, auth_token: MSG91_API_KEY, widget_id: MSG91_WIDGET_ID });
+  res.json({ success: true, auth_token: MSG91_AUTH_KEY, widget_id: MSG91_WIDGET_ID });
 });
 
 // ─── POST /otp/verify-msg91 ───────────────────────────────────────
