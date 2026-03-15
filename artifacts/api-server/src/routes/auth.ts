@@ -1,16 +1,13 @@
 import { Router, type IRouter, Request, Response } from "express";
-import https from "https";
 import { verifyFirebaseToken } from "../lib/firebase.js";
 import { signToken } from "../lib/jwt.js";
 
 const router: IRouter = Router();
 
-// ─── MSG91 OTP ────────────────────────────────────────────────
-const MSG91_AUTH_KEY   = process.env["MSG91_AUTH_KEY"]   ?? "";
-const MSG91_TEMPLATE_ID = process.env["MSG91_TEMPLATE_ID"] ?? "";
-const MSG91_WIDGET_ID  = process.env["MSG91_WIDGET_ID"]  ?? "36636f726646343938363634";
+// ─── Fast2SMS OTP ─────────────────────────────────────────────
+const FAST2SMS_API_KEY = process.env["FAST2SMS_API_KEY"] ?? "";
 
-const OTP_EXPIRY_MS       = 5 * 60 * 1000;  // 5 minutes
+const OTP_EXPIRY_MS       = 10 * 60 * 1000; // 10 minutes
 const RATE_WINDOW_MS      = 60 * 60 * 1000; // 1 hour
 const MAX_SEND_PER_HOUR   = 3;
 const MAX_VERIFY_ATTEMPTS = 5;
@@ -22,8 +19,8 @@ interface OtpRecord {
 }
 interface RateRecord { count: number; windowStart: number }
 
-const otpStore       = new Map<string, OtpRecord>();
-const sendRateStore  = new Map<string, RateRecord>();
+const otpStore      = new Map<string, OtpRecord>();
+const sendRateStore = new Map<string, RateRecord>();
 
 function checkSendRate(phone: string): boolean {
   const now   = Date.now();
@@ -41,40 +38,50 @@ function generateOtp(): string {
   return Math.floor(100000 + Math.random() * 900000).toString();
 }
 
-async function sendMsg91Otp(phone: string, otp: string): Promise<void> {
-  if (!MSG91_AUTH_KEY || !MSG91_TEMPLATE_ID) {
-    console.warn("[MSG91] API key or template ID not configured — OTP not sent");
-    return;
-  }
-  // E.164 → MSG91 mobile format (no leading +)
-  const mobile = phone.startsWith("+") ? phone.slice(1) : phone;
-  return new Promise((resolve, reject) => {
-    const path = `/api/v5/otp?otp=${otp}&template_id=${encodeURIComponent(MSG91_TEMPLATE_ID)}&mobile=${mobile}`;
-    const options = {
-      hostname: "control.msg91.com",
-      path,
-      method: "POST",
-      headers: { authkey: MSG91_AUTH_KEY, "Content-Type": "application/json" },
-    };
-    const req = https.request(options, (resp) => {
-      let d = "";
-      resp.on("data", (c) => (d += c));
-      resp.on("end", () => {
-        try {
-          const parsed = JSON.parse(d) as { type?: string; message?: string };
-          if (parsed.type === "success") resolve();
-          else reject(new Error(parsed.message ?? "MSG91 send failed"));
-        } catch {
-          reject(new Error("Failed to parse MSG91 response"));
-        }
-      });
-    });
-    req.on("error", reject);
-    req.end();
-  });
+// Strip +91 or + prefix — Fast2SMS expects digits only, no country code
+function toFast2SmsNumber(phone: string): string {
+  if (phone.startsWith("+91")) return phone.slice(3);
+  if (phone.startsWith("+"))   return phone.slice(1);
+  return phone;
 }
 
-// ─── POST /send-otp  (MSG91) ───────────────────────────────────
+async function sendFast2SmsOtp(phone: string, otp: string): Promise<void> {
+  if (!FAST2SMS_API_KEY) {
+    console.warn("[Fast2SMS] FAST2SMS_API_KEY not configured — OTP not sent");
+    return;
+  }
+
+  const number = toFast2SmsNumber(phone);
+  const params = new URLSearchParams({
+    authorization:    FAST2SMS_API_KEY,
+    route:            "otp",
+    variables_values: otp,
+    numbers:          number,
+    flash:            "0",
+  });
+
+  const url = `https://www.fast2sms.com/dev/bulkV2?${params.toString()}`;
+
+  const response = await fetch(url, {
+    method:  "GET",
+    headers: { "cache-control": "no-cache" },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Fast2SMS HTTP error: ${response.status}`);
+  }
+
+  const data = await response.json() as { return?: boolean; message?: string | string[] };
+
+  if (data.return === false) {
+    const msg = Array.isArray(data.message) ? data.message.join(", ") : (data.message ?? "Unknown error");
+    throw new Error(`Fast2SMS send failed: ${msg}`);
+  }
+
+  console.log(`[Fast2SMS] OTP sent to ${number}`);
+}
+
+// ─── POST /send-otp ───────────────────────────────────────────
 router.post("/send-otp", async (req: Request, res: Response): Promise<void> => {
   try {
     const { phone } = req.body as { phone?: string };
@@ -104,11 +111,10 @@ router.post("/send-otp", async (req: Request, res: Response): Promise<void> => {
     });
 
     try {
-      await sendMsg91Otp(phone, otp);
+      await sendFast2SmsOtp(phone, otp);
     } catch (smsErr) {
-      console.error("[MSG91] send error:", smsErr);
-      // In dev/misconfigured: still store OTP but warn
-      if (!MSG91_AUTH_KEY) {
+      console.error("[Fast2SMS] send error:", smsErr);
+      if (!FAST2SMS_API_KEY) {
         console.warn(`[DEV] OTP for ${phone}: ${otp}`);
       } else {
         res.status(502).json({ error: "Failed to send OTP via SMS", details: String(smsErr) });
@@ -120,14 +126,14 @@ router.post("/send-otp", async (req: Request, res: Response): Promise<void> => {
       success: true,
       message: "OTP sent successfully",
       phone,
-      expires_in_seconds: 300,
+      expires_in_seconds: 600,
     });
   } catch (error) {
     res.status(500).json({ error: "Failed to send OTP", details: String(error) });
   }
 });
 
-// ─── POST /verify-otp  (MSG91 + JWT) ──────────────────────────
+// ─── POST /verify-otp ─────────────────────────────────────────
 router.post("/verify-otp", async (req: Request, res: Response): Promise<void> => {
   try {
     const { phone, otp } = req.body as { phone?: string; otp?: string };
@@ -166,7 +172,7 @@ router.post("/verify-otp", async (req: Request, res: Response): Promise<void> =>
 
     // OTP verified — clean up and issue JWT
     otpStore.delete(phone);
-    const userId = `phone_${phone.replace(/[^0-9]/g, "")}`;
+    const userId   = `phone_${phone.replace(/[^0-9]/g, "")}`;
     const jwtToken = signToken({ userId, phone, provider: "phone" });
 
     res.json({
@@ -180,7 +186,7 @@ router.post("/verify-otp", async (req: Request, res: Response): Promise<void> =>
   }
 });
 
-// ─── Legacy aliases (keep backward compat) ────────────────────
+// ─── Legacy aliases (backward compat) ────────────────────────
 router.post("/otp/send", async (req: Request, res: Response): Promise<void> => {
   try {
     const { phone } = req.body as { phone?: string };
@@ -194,11 +200,13 @@ router.post("/otp/send", async (req: Request, res: Response): Promise<void> => {
     }
     const otp = generateOtp();
     otpStore.set(phone, { otp, expiry: Date.now() + OTP_EXPIRY_MS, verifyAttempts: 0 });
-    try { await sendMsg91Otp(phone, otp); } catch (e) {
-      if (MSG91_AUTH_KEY) { res.status(502).json({ error: "SMS send failed", details: String(e) }); return; }
+    try {
+      await sendFast2SmsOtp(phone, otp);
+    } catch (e) {
+      if (FAST2SMS_API_KEY) { res.status(502).json({ error: "SMS send failed", details: String(e) }); return; }
       console.warn(`[DEV] OTP for ${phone}: ${otp}`);
     }
-    res.json({ success: true, message: "OTP sent", phone, expires_in_seconds: 300 });
+    res.json({ success: true, message: "OTP sent", phone, expires_in_seconds: 600 });
   } catch (error) { res.status(500).json({ error: String(error) }); }
 });
 
@@ -207,7 +215,6 @@ router.post("/otp/verify", async (req: Request, res: Response): Promise<void> =>
     const { phone, otp, idToken, id_token } = req.body as {
       phone?: string; otp?: string; idToken?: string; id_token?: string;
     };
-    // Support both MSG91 OTP path and Firebase token path
     const firebaseToken = idToken ?? id_token;
     if (firebaseToken) {
       const decoded = await verifyFirebaseToken(firebaseToken);
@@ -223,13 +230,13 @@ router.post("/otp/verify", async (req: Request, res: Response): Promise<void> =>
     if (record.verifyAttempts >= MAX_VERIFY_ATTEMPTS) { otpStore.delete(phone); res.status(429).json({ error: "Too many attempts" }); return; }
     if (record.otp !== otp) { record.verifyAttempts++; res.status(400).json({ error: "Incorrect OTP" }); return; }
     otpStore.delete(phone);
-    const userId = `phone_${phone.replace(/[^0-9]/g, "")}`;
+    const userId   = `phone_${phone.replace(/[^0-9]/g, "")}`;
     const jwtToken = signToken({ userId, phone, provider: "phone" });
     res.json({ success: true, token: jwtToken, user: { uid: userId, phone, provider: "phone" } });
   } catch (error) { res.status(500).json({ error: String(error) }); }
 });
 
-// ─── POST /google ──────────────────────────────────────────────
+// ─── POST /google ─────────────────────────────────────────────
 router.post("/google", async (req: Request, res: Response): Promise<void> => {
   try {
     const body = req.body as {
@@ -238,10 +245,10 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
     };
     const token = body.firebase_token ?? body.idToken ?? body.id_token;
     if (!token) { res.status(400).json({ error: "firebase_token (or idToken) is required" }); return; }
-    const decoded = await verifyFirebaseToken(token);
+    const decoded    = await verifyFirebaseToken(token);
     const { uid, email, name, picture } = decoded;
-    const isNewUser = decoded.auth_time === decoded.iat;
-    const jwtToken = signToken({ userId: uid, email: email ?? undefined, provider: "google" });
+    const isNewUser  = decoded.auth_time === decoded.iat;
+    const jwtToken   = signToken({ userId: uid, email: email ?? undefined, provider: "google" });
     res.json({
       success: true, token: jwtToken, is_new_user: isNewUser,
       user: { uid, email: email ?? body.email, name: name ?? body.name, picture: picture ?? body.photo_url, provider: "google" },
@@ -251,106 +258,23 @@ router.post("/google", async (req: Request, res: Response): Promise<void> => {
   }
 });
 
-// ─── POST /login ───────────────────────────────────────────────
+// ─── POST /login ──────────────────────────────────────────────
 router.post("/login", async (req: Request, res: Response): Promise<void> => {
   try {
-    const { idToken, id_token, firebase_token, provider } = req.body as {
-      idToken?: string; id_token?: string; firebase_token?: string; provider?: string;
+    const { idToken, id_token, firebase_token } = req.body as {
+      idToken?: string; id_token?: string; firebase_token?: string;
     };
     const token = firebase_token ?? idToken ?? id_token;
-    if (!token) { res.status(400).json({ error: "idToken (or firebase_token) is required" }); return; }
-    const decoded = await verifyFirebaseToken(token);
+    if (!token) { res.status(400).json({ error: "firebase_token (or idToken) is required" }); return; }
+    const decoded  = await verifyFirebaseToken(token);
     const { uid, email, phone_number, name, picture } = decoded;
-    const authProvider = (provider === "phone" ? "phone" : "google") as "google" | "phone";
-    const isNewUser = decoded.auth_time === decoded.iat;
-    const jwtToken = signToken({ userId: uid, email: email ?? undefined, phone: phone_number ?? undefined, provider: authProvider });
+    const jwtToken = signToken({ userId: uid, email: email ?? undefined, phone: phone_number ?? undefined, provider: "firebase" });
     res.json({
-      success: true, token: jwtToken, is_new_user: isNewUser,
-      user: { uid, email, phone: phone_number, name, picture, provider: authProvider },
+      success: true, token: jwtToken,
+      user: { uid, email, phone: phone_number, name, picture, provider: "firebase" },
     });
   } catch (error) {
-    res.status(401).json({ error: "Authentication failed", details: String(error) });
-  }
-});
-
-// MSG91 widget OTP verifier (called by /otp/verify-msg91)
-async function verifyMsg91WidgetOtp(phone: string, otp: string): Promise<boolean> {
-  // In dev mode (no API key) accept any 6-digit OTP for testing
-  if (!MSG91_AUTH_KEY) {
-    console.warn("[MSG91-WIDGET] No API key — accepting OTP in dev mode:", otp);
-    return otp.length === 6;
-  }
-  const identifier = phone.startsWith("+") ? phone.slice(1) : phone;
-  return new Promise((resolve) => {
-    const body = JSON.stringify({ otp, widgetId: MSG91_WIDGET_ID, identifier });
-    const options = {
-      hostname: "api.msg91.com",
-      path: "/api/v5/widget/verifyOtp",
-      method: "POST",
-      headers: {
-        authkey: MSG91_AUTH_KEY,
-        "Content-Type": "application/json",
-        "Content-Length": Buffer.byteLength(body),
-      },
-    };
-    const req = https.request(options, (resp) => {
-      let d = "";
-      resp.on("data", (c) => (d += c));
-      resp.on("end", () => {
-        try {
-          const parsed = JSON.parse(d) as { type?: string; message?: string };
-          console.log("[MSG91-WIDGET] verifyOtp response:", parsed);
-          resolve(parsed.type === "success");
-        } catch {
-          resolve(false);
-        }
-      });
-    });
-    req.on("error", () => resolve(false));
-    req.write(body);
-    req.end();
-  });
-}
-
-// ─── GET /msg91-token ────────────────────────────────────────────
-// Returns the MSG91 auth key so the Flutter widget SDK can initialise.
-// The auth key is kept server-side only and never shipped in the app binary.
-router.get("/msg91-token", (req: Request, res: Response): void => {
-  if (!MSG91_AUTH_KEY) {
-    res.status(503).json({ error: "MSG91 not configured on this server" });
-    return;
-  }
-  res.json({ success: true, auth_token: MSG91_AUTH_KEY, widget_id: MSG91_WIDGET_ID });
-});
-
-// ─── POST /otp/verify-msg91 ───────────────────────────────────────
-// Verifies OTP with MSG91 widget API then issues a Raahi JWT.
-router.post("/otp/verify-msg91", async (req: Request, res: Response): Promise<void> => {
-  try {
-    const { phone, otp } = req.body as { phone?: string; otp?: string };
-    if (!phone || !otp) {
-      res.status(400).json({ error: "phone and otp are required" });
-      return;
-    }
-
-    // Verify OTP with MSG91 widget API
-    const verified = await verifyMsg91WidgetOtp(phone, otp);
-    if (!verified) {
-      res.status(400).json({ error: "Invalid or expired OTP" });
-      return;
-    }
-
-    // Issue Raahi JWT
-    const userId   = "phone_" + phone.replace(/[^0-9]/g, "");
-    const jwtToken = signToken({ userId, phone, provider: "phone" });
-    res.json({
-      success: true,
-      token: jwtToken,
-      is_new_user: false,
-      user: { uid: userId, phone, provider: "phone" },
-    });
-  } catch (error) {
-    res.status(500).json({ error: "OTP verification failed", details: String(error) });
+    res.status(401).json({ error: "Invalid Firebase token", details: String(error) });
   }
 });
 
