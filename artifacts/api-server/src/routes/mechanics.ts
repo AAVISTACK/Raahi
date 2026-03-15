@@ -103,7 +103,7 @@ router.post("/register", authMiddleware, (req: AuthRequest, res: Response): void
 });
 
 router.get("/:id", (req: Request, res: Response): void => {
-  const mechanic = mechanicStore.get(req.params.id);
+  const mechanic = mechanicStore.get(req.params["id"] as string);
   if (!mechanic) { res.status(404).json({ error: "Mechanic not found" }); return; }
   res.json({ success: true, mechanic });
 });
