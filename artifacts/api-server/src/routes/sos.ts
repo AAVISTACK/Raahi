@@ -52,7 +52,7 @@ router.get("/my", authMiddleware, (req: AuthRequest, res: Response): void => {
 });
 
 router.patch("/:id/resolve", authMiddleware, (req: AuthRequest, res: Response): void => {
-  const alert = sosStore.get(req.params.id);
+  const alert = sosStore.get(req.params["id"] as string);
   if (!alert) { res.status(404).json({ error: "Alert not found" }); return; }
   if (alert.user_id !== req.user!.userId) {
     res.status(403).json({ error: "Forbidden" });
