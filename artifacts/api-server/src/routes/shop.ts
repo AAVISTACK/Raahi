@@ -93,7 +93,7 @@ router.get("/products", (req: Request, res: Response): void => {
 });
 
 router.get("/products/:id", (req: Request, res: Response): void => {
-  const product = productStore.get(req.params.id);
+  const product = productStore.get(req.params["id"] as string);
   if (!product) { res.status(404).json({ error: "Product not found" }); return; }
   res.json({ success: true, product });
 });
@@ -136,7 +136,7 @@ router.get("/orders/mine", authMiddleware, (req: AuthRequest, res: Response): vo
 });
 
 router.get("/orders/:id", authMiddleware, (req: AuthRequest, res: Response): void => {
-  const order = orderStore.get(req.params.id);
+  const order = orderStore.get(req.params["id"] as string);
   if (!order) { res.status(404).json({ error: "Order not found" }); return; }
   if (order.user_id !== req.user!.userId) { res.status(403).json({ error: "Forbidden" }); return; }
   res.json({ success: true, order });
