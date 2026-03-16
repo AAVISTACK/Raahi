@@ -1,5 +1,4 @@
 import { Router, type IRouter, Request, Response } from "express";
-import { authMiddleware } from "../middlewares/auth.js";
 import https from "https";
 
 const router: IRouter = Router();
@@ -52,7 +51,7 @@ const LANGUAGE_NAMES: Record<string, string> = {
   bn: "Bengali",
 };
 
-router.post("/chat", authMiddleware, async (req: Request, res: Response): Promise<void> => {
+router.post("/chat", async (req: Request, res: Response): Promise<void> => {
   try {
     const { session_id, message, history, vehicle_type, language } = req.body as {
       session_id?: string;
